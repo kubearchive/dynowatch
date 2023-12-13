@@ -17,6 +17,7 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"runtime"
@@ -28,10 +29,15 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+
+	cloudevents "github.com/cloudevents/sdk-go/v2"
+
+	"github.com/kubearchive/dynowatch/internal/cloudevents/test"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -41,6 +47,11 @@ import (
 var cfg *rest.Config
 var k8sClient client.Client
 var testEnv *envtest.Environment
+var testServer *test.TestReceiver
+var controllerCtx context.Context
+var controllerCancel context.CancelFunc
+var receiverCtx context.Context
+var receiverCancel context.CancelFunc
 
 func TestControllers(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -50,6 +61,12 @@ func TestControllers(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
+
+	// The controller and cloud event receiver require separate contexts.
+	// This ensures that we simulate a production environment where the receiver can run in a
+	// different process, container, or even machine/cloud!
+	controllerCtx, controllerCancel = context.WithCancel(context.TODO())
+	receiverCtx, receiverCancel = context.WithCancel(context.TODO())
 
 	By("bootstrapping test environment")
 	testEnv = &envtest.Environment{
@@ -68,22 +85,53 @@ var _ = BeforeSuite(func() {
 	var err error
 	// cfg is defined in this file globally.
 	cfg, err = testEnv.Start()
-	Expect(err).NotTo(HaveOccurred())
-	Expect(cfg).NotTo(BeNil())
+	Expect(err).NotTo(HaveOccurred(), "starting test environment")
+	Expect(cfg).NotTo(BeNil(), "test environment configuration")
 
 	err = batchv1.AddToScheme(scheme.Scheme)
-	Expect(err).NotTo(HaveOccurred())
+	Expect(err).NotTo(HaveOccurred(), "add batchv1 api to scheme")
 
 	//+kubebuilder:scaffold:scheme
 
+	// First set up a test CloudEvent receiver, using http protocol
+	testServer, err = test.NewTestReceiver(receiverCtx)
+	Expect(err).NotTo(HaveOccurred(), "create cloudevent receiver")
+	testServer.Start()
+
+	eventsClient, err := cloudevents.NewClientHTTP()
+	Expect(err).NotTo(HaveOccurred(), "setting up cloudEvents client")
+
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
-	Expect(err).NotTo(HaveOccurred())
-	Expect(k8sClient).NotTo(BeNil())
+	Expect(err).NotTo(HaveOccurred(), "create dynamic k8s client")
+	Expect(k8sClient).NotTo(BeNil(), "dynamic k8s client")
+
+	k8sManager, err := ctrl.NewManager(cfg, ctrl.Options{
+		Scheme: scheme.Scheme,
+	})
+	Expect(err).NotTo(HaveOccurred(), "creating controller manager")
+	reconciler := &JobReconciler{
+		Client:       k8sManager.GetClient(),
+		Scheme:       k8sManager.GetScheme(),
+		EventsSource: "test-source",
+		EventsTarget: testServer.URL,
+		EventsClient: eventsClient,
+	}
+	err = reconciler.SetupWithManager(k8sManager)
+	Expect(err).NotTo(HaveOccurred(), "set up job reconciler")
+
+	go func() {
+		defer GinkgoRecover()
+		err = k8sManager.Start(controllerCtx)
+		Expect(err).NotTo(HaveOccurred(), "run controller manager")
+	}()
 
 })
 
 var _ = AfterSuite(func() {
+	controllerCancel()
+	receiverCancel()
 	By("tearing down the test environment")
+	testServer.Close()
 	err := testEnv.Stop()
-	Expect(err).NotTo(HaveOccurred())
+	Expect(err).NotTo(HaveOccurred(), "stopping envtest")
 })
