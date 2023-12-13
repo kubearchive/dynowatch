@@ -58,7 +58,11 @@ func (r *JobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	eventCtx := cloudevents.ContextWithTarget(ctx, r.EventsTarget)
 
 	job := &batchv1.Job{}
-	event := r.newEvent(req.NamespacedName)
+	event, err := r.newEvent(req.NamespacedName)
+	if err != nil {
+		log.Error(err, "failed to create event")
+		return ctrl.Result{}, err
+	}
 	if err := r.Get(ctx, req.NamespacedName, job); err != nil {
 		// If not found, return error for requeue
 		if !errors.IsNotFound(err) {
@@ -76,17 +80,17 @@ func (r *JobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	return ctrl.Result{}, nil
 }
 
-func (r *JobReconciler) newEvent(key types.NamespacedName) cloudevents.Event {
+func (r *JobReconciler) newEvent(key types.NamespacedName) (cloudevents.Event, error) {
 	event := cloudevents.NewEvent()
 	event.SetSource(r.EventsSource)
 	event.SetType("dynowatch.kubearchive.dev")
-	event.SetData(cloudevents.ApplicationJSON, map[string]string{
+	err := event.SetData(cloudevents.ApplicationJSON, map[string]string{
 		"kind":       "Job",
 		"apiVersion": "batch/v1",
 		"namespace":  key.Namespace,
 		"name":       key.Name,
 	})
-	return event
+	return event, err
 }
 
 // SetupWithManager sets up the controller with the Manager.

@@ -59,7 +59,8 @@ func main() {
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
-	flag.StringVar(&eventsSource, "events-source-uri-ref", "locahost", "Source of the CloudEvent as a URI reference. The source plus ID of a CloudEvent should be uniquely identifiable.")
+	flag.StringVar(&eventsSource, "events-source-uri-ref", "locahost",
+		"Source of the CloudEvent as a URI reference. The source plus ID of a CloudEvent should be uniquely identifiable.")
 	flag.StringVar(&eventsTargetAddr, "events-target-address", ":8082", "The target address to send CloudEvents to.")
 	opts := &zap.Options{
 		Development: true,
