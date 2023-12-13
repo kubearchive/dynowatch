@@ -1,2 +1,7 @@
 resources:
 - manager.yaml
+
+configMapGenerator:
+- files:
+  - dynowatch.yaml
+  name: config

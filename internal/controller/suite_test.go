@@ -27,6 +27,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	batchv1 "k8s.io/api/batch/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -109,12 +110,13 @@ var _ = BeforeSuite(func() {
 		Scheme: scheme.Scheme,
 	})
 	Expect(err).NotTo(HaveOccurred(), "creating controller manager")
-	reconciler := &JobReconciler{
-		Client:       k8sManager.GetClient(),
-		Scheme:       k8sManager.GetScheme(),
-		EventsSource: "test-source",
-		EventsTarget: testServer.URL,
-		EventsClient: eventsClient,
+	reconciler := &DynamicReconciler{
+		Client:           k8sManager.GetClient(),
+		Scheme:           k8sManager.GetScheme(),
+		GroupVersionKind: schema.FromAPIVersionAndKind("batch/v1", "Job"),
+		EventsSource:     "test-source",
+		EventsTarget:     testServer.URL,
+		EventsClient:     eventsClient,
 	}
 	err = reconciler.SetupWithManager(k8sManager)
 	Expect(err).NotTo(HaveOccurred(), "set up job reconciler")
