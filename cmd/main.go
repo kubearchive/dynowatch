@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
+	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/kubearchive/dynowatch/internal/controller"
 	//+kubebuilder:scaffold:imports
 )
@@ -51,18 +52,22 @@ func main() {
 	var metricsAddr string
 	var enableLeaderElection bool
 	var probeAddr string
+	var eventsSource string
+	var eventsTargetAddr string
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
-	opts := zap.Options{
+	flag.StringVar(&eventsSource, "events-source-uri-ref", "locahost", "Source of the CloudEvent as a URI reference. The source plus ID of a CloudEvent should be uniquely identifiable.")
+	flag.StringVar(&eventsTargetAddr, "events-target-address", ":8082", "The target address to send CloudEvents to.")
+	opts := &zap.Options{
 		Development: true,
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	ctrl.SetLogger(zap.New(zap.UseFlagOptions(opts)))
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
@@ -87,9 +92,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	protocol, err := cloudevents.NewHTTP()
+	if err != nil {
+		setupLog.Error(err, "unable to set up cloudevents client")
+		os.Exit(1)
+	}
+	eventsClient, err := cloudevents.NewClient(protocol, cloudevents.WithTimeNow(), cloudevents.WithUUIDs())
+	if err != nil {
+		setupLog.Error(err, "unable to set up cloudevents client")
+	}
+
 	if err = (&controller.JobReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		EventsSource: eventsSource,
+		EventsTarget: eventsTargetAddr,
+		EventsClient: eventsClient,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Job")
 		os.Exit(1)

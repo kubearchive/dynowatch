@@ -20,16 +20,24 @@ import (
 	"context"
 
 	batchv1 "k8s.io/api/batch/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	cloudevents "github.com/cloudevents/sdk-go/v2"
+	cloudeventsclient "github.com/cloudevents/sdk-go/v2/client"
 )
 
 // JobReconciler reconciles a Job object
 type JobReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme       *runtime.Scheme
+	EventsSource string
+	EventsTarget string
+	EventsClient cloudeventsclient.Client
 }
 
 //+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
@@ -46,11 +54,39 @@ type JobReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.16.3/pkg/reconcile
 func (r *JobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	log := log.FromContext(ctx)
+	eventCtx := cloudevents.ContextWithTarget(ctx, r.EventsTarget)
 
-	// TODO(user): your logic here
+	job := &batchv1.Job{}
+	event := r.newEvent(req.NamespacedName)
+	if err := r.Get(ctx, req.NamespacedName, job); err != nil {
+		// If not found, return error for requeue
+		if !errors.IsNotFound(err) {
+			return ctrl.Result{}, err
+		}
+	}
+
+	result := r.EventsClient.Send(eventCtx, event)
+	if cloudevents.IsUndelivered(result) {
+		log.Error(result, "failed to deliver event")
+		return ctrl.Result{}, result
+	}
+	log.Info("delivered event")
 
 	return ctrl.Result{}, nil
+}
+
+func (r *JobReconciler) newEvent(key types.NamespacedName) cloudevents.Event {
+	event := cloudevents.NewEvent()
+	event.SetSource(r.EventsSource)
+	event.SetType("dynowatch.kubearchive.dev")
+	event.SetData(cloudevents.ApplicationJSON, map[string]string{
+		"kind":       "Job",
+		"apiVersion": "batch/v1",
+		"namespace":  key.Namespace,
+		"name":       key.Name,
+	})
+	return event
 }
 
 // SetupWithManager sets up the controller with the Manager.
