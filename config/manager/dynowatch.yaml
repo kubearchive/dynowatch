@@ -1,0 +1,5 @@
+watches:
+  - name: jobs
+    group: batch
+    version: v1
+    kind: Job

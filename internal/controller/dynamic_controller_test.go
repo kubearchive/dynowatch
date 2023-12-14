@@ -27,7 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-var _ = Describe("job controller", func() {
+var _ = Describe("dynamic reconciler", func() {
 
 	BeforeEach(func() {
 		Expect(testServer.GetEvents()).Should(BeEmpty())
